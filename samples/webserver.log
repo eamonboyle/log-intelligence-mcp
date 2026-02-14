@@ -1,0 +1,29 @@
+2026-02-10T07:00:00.000Z [INFO] Server starting on port 8080
+2026-02-10T07:00:01.000Z [INFO] Connected to database at localhost:5432
+2026-02-10T07:00:02.000Z [INFO] Cache initialized with 256MB max memory
+2026-02-10T07:05:00.000Z [WARN] Request rate approaching limit: 450/500 rps
+2026-02-10T07:10:00.000Z [ERROR] Connection pool exhausted, cannot serve request
+   java.sql.SQLException: Cannot get a connection, pool error Timeout waiting for idle object
+   at org.apache.commons.dbcp2.BasicDataSource.getConnection(BasicDataSource.java:1543)
+   at com.example.api.OrderController.listOrders(OrderController.java:45)
+2026-02-10T07:10:05.000Z [ERROR] Connection pool exhausted, cannot serve request
+   java.sql.SQLException: Cannot get a connection, pool error Timeout waiting for idle object
+   at org.apache.commons.dbcp2.BasicDataSource.getConnection(BasicDataSource.java:1543)
+   at com.example.api.OrderController.listOrders(OrderController.java:45)
+2026-02-10T07:10:10.000Z [ERROR] Connection pool exhausted, cannot serve request
+   java.sql.SQLException: Cannot get a connection, pool error Timeout waiting for idle object
+   at org.apache.commons.dbcp2.BasicDataSource.getConnection(BasicDataSource.java:1543)
+   at com.example.api.OrderController.listOrders(OrderController.java:45)
+2026-02-10T07:15:00.000Z [INFO] Connection pool recovered, active connections: 8/50
+2026-02-10T07:20:00.000Z [ERROR] Failed to deserialize message from queue: invalid JSON at position 42
+2026-02-10T07:25:00.000Z [ERROR] Authentication token expired for user session abc123def456
+2026-02-10T07:30:00.000Z [ERROR] Authentication token expired for user session xyz789ghi012
+2026-02-10T07:35:00.000Z [WARN] Disk usage at 85% on /var/data
+2026-02-10T07:40:00.000Z [ERROR] OutOfMemoryError in worker thread pool-3-thread-7
+   java.lang.OutOfMemoryError: Java heap space
+   at java.util.Arrays.copyOf(Arrays.java:3210)
+   at com.example.batch.ReportGenerator.generate(ReportGenerator.java:112)
+2026-02-10T07:45:00.000Z [INFO] Garbage collection completed: freed 512MB
+2026-02-10T07:50:00.000Z [ERROR] Failed to deserialize message from queue: invalid JSON at position 108
+2026-02-10T08:00:00.000Z [INFO] Daily backup started
+2026-02-10T08:30:00.000Z [INFO] Daily backup completed successfully

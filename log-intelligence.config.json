@@ -1,0 +1,12 @@
+{
+  "sources": [
+    { "name": "app-logs", "type": "serilog", "path": "./samples/app.clef" },
+    { "name": "webserver", "type": "flatfile", "path": "./samples/webserver.log" },
+    { "name": "elastic-dump", "type": "elastic", "path": "./samples/elastic-dump.json" }
+  ],
+  "defaults": {
+    "bucketMinutes": 60,
+    "anomalyThreshold": 2.0,
+    "maxSamples": 3
+  }
+}

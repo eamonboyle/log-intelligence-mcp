@@ -1,0 +1,10 @@
+[
+  {"@timestamp":"2026-02-10T06:00:00.000Z","level":"info","message":"Elasticsearch cluster health: green","cluster":"prod-logs","node_count":3},
+  {"@timestamp":"2026-02-10T06:30:00.000Z","level":"warn","message":"Index shard allocation delayed for index logs-2026.02.10","index":"logs-2026.02.10","reason":"node_left"},
+  {"@timestamp":"2026-02-10T07:00:00.000Z","level":"error","message":"Failed to index document: mapper_parsing_exception","stack_trace":"org.elasticsearch.index.mapper.MapperParsingException: failed to parse field [request.body]\n   at org.elasticsearch.index.mapper.FieldMapper.parse(FieldMapper.java:302)","index":"api-logs","doc_id":"abc123"},
+  {"@timestamp":"2026-02-10T07:05:00.000Z","level":"error","message":"Failed to index document: mapper_parsing_exception","stack_trace":"org.elasticsearch.index.mapper.MapperParsingException: failed to parse field [response.headers]\n   at org.elasticsearch.index.mapper.FieldMapper.parse(FieldMapper.java:302)","index":"api-logs","doc_id":"def456"},
+  {"@timestamp":"2026-02-10T07:10:00.000Z","level":"error","message":"Circuit breaker triggered: parent data too large","stack_trace":"org.elasticsearch.common.breaker.CircuitBreakingException: [parent] Data too large\n   at org.elasticsearch.indices.breaker.HierarchyCircuitBreakerService.checkParentLimit()","node":"node-2","limit":"70%"},
+  {"@timestamp":"2026-02-10T07:15:00.000Z","level":"info","message":"Node node-2 rejoined cluster after restart","node":"node-2"},
+  {"@timestamp":"2026-02-10T07:30:00.000Z","level":"error","message":"Search query timed out after 30000ms","index":"api-logs","query":"*error*","took_ms":30000},
+  {"@timestamp":"2026-02-10T08:00:00.000Z","level":"info","message":"Index lifecycle policy applied: delete indices older than 30d"}
+]
