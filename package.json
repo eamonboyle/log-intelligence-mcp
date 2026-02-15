@@ -9,11 +9,33 @@
   },
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts"
   },
-  "keywords": ["mcp", "logs", "anomaly-detection", "error-clustering", "ai"],
+  "keywords": [
+    "mcp",
+    "logs",
+    "anomaly-detection",
+    "error-clustering",
+    "ai"
+  ],
   "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist",
+    "samples"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eamonboyle/log-intelligence-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/eamonboyle/log-intelligence-mcp/issues"
+  },
+  "homepage": "https://github.com/eamonboyle/log-intelligence-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
     "sql.js": "^1.11.0",

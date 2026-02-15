@@ -1,5 +1,8 @@
 # Log Intelligence MCP Server
 
+[![Add to Cursor](https://img.shields.io/badge/Add_to-Cursor-000000?style=for-the-badge&logo=cursor&logoColor=white)](cursor://anysphere.cursor-deeplink/mcp/install?name=log-intelligence&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImxvZy1pbnRlbGxpZ2VuY2UtbWNwIl19)
+[![Install in VS Code](https://img.shields.io/badge/Install_in-VS_Code-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](vscode://mcp/install?%7B%22name%22%3A%22log-intelligence%22%2C%22type%22%3A%22stdio%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22log-intelligence-mcp%22%5D%7D)
+
 An AI-powered log analysis server built on the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). It ingests structured logs from multiple sources, detects anomalies, clusters similar errors, summarises recurring failures, and identifies regressions after deployments.
 
 ## Features
@@ -11,7 +14,17 @@ An AI-powered log analysis server built on the [Model Context Protocol (MCP)](ht
 - **Full-text search** -- Search across all ingested log entries
 - **Timeline visualisation** -- Error frequency bucketed over time with ASCII bar charts
 
-## Quick Start
+## Install
+
+```bash
+# From npm (recommended)
+npm install -g log-intelligence-mcp
+
+# Or run without installing
+npx log-intelligence-mcp
+```
+
+## Quick Start (from source)
 
 ```bash
 # Install dependencies
@@ -26,9 +39,38 @@ npm start
 
 ## MCP Client Configuration
 
-### Claude Desktop
+### Cursor (recommended: npx)
 
-Add to your `claude_desktop_config.json`:
+Add to your `.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "log-intelligence": {
+      "command": "npx",
+      "args": ["log-intelligence-mcp"]
+    }
+  }
+}
+```
+
+### Cursor (global install)
+
+If you installed globally with `npm install -g log-intelligence-mcp`:
+
+```json
+{
+  "mcpServers": {
+    "log-intelligence": {
+      "command": "log-intelligence-mcp"
+    }
+  }
+}
+```
+
+### Cursor (local development)
+
+When developing from source:
 
 ```json
 {
@@ -41,16 +83,16 @@ Add to your `claude_desktop_config.json`:
 }
 ```
 
-### Cursor
+### Claude Desktop
 
-Add to your `.cursor/mcp.json`:
+Add to your `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "log-intelligence": {
-      "command": "node",
-      "args": ["path/to/log-intelligence-mcp/dist/index.js"]
+      "command": "npx",
+      "args": ["log-intelligence-mcp"]
     }
   }
 }
