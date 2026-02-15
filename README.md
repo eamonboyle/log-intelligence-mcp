@@ -1,7 +1,7 @@
 # Log Intelligence MCP Server
 
-[![Add to Cursor](https://img.shields.io/badge/Add_to-Cursor-000000?style=for-the-badge&logo=cursor&logoColor=white)](cursor://anysphere.cursor-deeplink/mcp/install?name=log-intelligence&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImxvZy1pbnRlbGxpZ2VuY2UtbWNwIl19)
-[![Install in VS Code](https://img.shields.io/badge/Install_in-VS_Code-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](vscode://mcp/install?%7B%22name%22%3A%22log-intelligence%22%2C%22type%22%3A%22stdio%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22log-intelligence-mcp%22%5D%7D)
+[![Add to Cursor](https://img.shields.io/badge/Add_to-Cursor-000000?style=for-the-badge&logo=cursor&logoColor=white)](https://cursor.com/en/install-mcp?name=log-intelligence&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsImxvZy1pbnRlbGxpZ2VuY2UtbWNwIl19)
+[![Install in VS Code](https://img.shields.io/badge/Install_in-VS_Code-007ACC?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://intradeus.github.io/http-protocol-redirector?r=vscode%3A%2F%2Fmcp%2Finstall%3F%257B%2522name%2522%253A%2522log-intelligence%2522%252C%2522type%2522%253A%2522stdio%2522%252C%2522command%2522%253A%2522npx%2522%252C%2522args%2522%253A%255B%2522-y%2522%252C%2522log-intelligence-mcp%2522%255D%257D)
 
 An AI-powered log analysis server built on the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). It ingests structured logs from multiple sources, detects anomalies, clusters similar errors, summarises recurring failures, and identifies regressions after deployments.
 
