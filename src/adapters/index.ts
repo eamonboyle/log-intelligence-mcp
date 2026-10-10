@@ -3,7 +3,7 @@ import { SerilogAdapter } from "./serilog.js";
 import { ElasticAdapter } from "./elastic.js";
 import { SqlAdapter } from "./sql.js";
 import { FlatfileAdapter } from "./flatfile.js";
-import { AdapterType } from "../types.js";
+import { ADAPTER_TYPES, AdapterType } from "../types.js";
 
 const adapters: Record<AdapterType, ILogAdapter> = {
   serilog: new SerilogAdapter(),
@@ -15,9 +15,9 @@ const adapters: Record<AdapterType, ILogAdapter> = {
 export function getAdapter(type: AdapterType): ILogAdapter {
   const adapter = adapters[type];
   if (!adapter) {
-    throw new Error(`Unknown adapter type: ${type}. Valid types: ${Object.keys(adapters).join(", ")}`);
+    throw new Error(`Unknown adapter type: ${type}. Valid types: ${ADAPTER_TYPES.join(", ")}`);
   }
   return adapter;
 }
 
-export { ILogAdapter } from "./base.js";
+export type { ILogAdapter } from "./base.js";
