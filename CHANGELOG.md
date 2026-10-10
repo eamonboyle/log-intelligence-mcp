@@ -37,7 +37,7 @@ All notable changes to this project are documented here. The format follows
 - `get_error_timeline`: `source` and `anomalyThreshold` arguments.
 - `logs://cluster/{fingerprint}` resource template with fingerprint completion.
 - `review-deployment` prompt.
-- Live Elasticsearch: API key (`apiKey` / `ELASTIC_API_KEY`) or basic auth (`ELASTIC_USERNAME` / `ELASTIC_PASSWORD`), configurable `limit` and `timestampField`, warning when results were truncated.
+- Live Elasticsearch: API key (`apiKey` / `ELASTIC_API_KEY`) or basic auth (`ELASTIC_USERNAME` / `ELASTIC_PASSWORD`), sent only to endpoints from the config file or `ELASTIC_URL`; configurable `limit` and `timestampField`, warning when results were truncated.
 - Ingest results report skipped lines and adapter warnings.
 - CLI flags `--config`, `--version`, `--help`; `LOG_INTELLIGENCE_CONFIG` environment variable.
 - Server `instructions` so clients know which tool to reach for first.

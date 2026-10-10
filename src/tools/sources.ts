@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { credentialsForEndpoint } from "../adapters/elastic.js";
 import { ingestSource } from "../ingest.js";
 import { ADAPTER_TYPES, SourceConfig } from "../types.js";
 import { SourceInfoJsonSchema, sourceInfoToJson, plural } from "../format.js";
@@ -22,7 +23,12 @@ export function registerSourceTools(server: McpServer, ctx: ServerContext): void
         table: z.string().optional().describe("Table name for the sql adapter (default Logs)"),
         filter: z.string().optional().describe("Filter: SQL WHERE clause for sql, query_string for elastic"),
         pattern: z.string().optional().describe("Custom regex for flatfile with groups (timestamp)(level)(message) or named groups"),
-        endpoint: z.string().optional().describe("Elasticsearch base URL for live queries, e.g. http://localhost:9200"),
+        endpoint: z
+          .string()
+          .optional()
+          .describe(
+            "Elasticsearch base URL for live queries, e.g. http://localhost:9200. Credentials are only sent if it matches a configured source or ELASTIC_URL"
+          ),
         index: z.string().optional().describe("Elasticsearch index name or pattern (default *)"),
         limit: z.number().int().positive().optional().describe("Max documents to fetch from live Elasticsearch (default and max 10000)"),
       },
@@ -49,6 +55,7 @@ export function registerSourceTools(server: McpServer, ctx: ServerContext): void
         endpoint: args.endpoint,
         index: args.index,
         limit: args.limit,
+        ...(args.endpoint ? credentialsForEndpoint(args.endpoint, ctx.config.sources) : {}),
       };
 
       const outcome = await ingestSource(ctx.store, sourceConfig, args.mode ?? "replace");

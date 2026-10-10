@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SerilogAdapter, renderMessageTemplate } from "../src/adapters/serilog.js";
 import { FlatfileAdapter, parseApacheDate } from "../src/adapters/flatfile.js";
-import { ElasticAdapter } from "../src/adapters/elastic.js";
+import { ElasticAdapter, credentialsForEndpoint } from "../src/adapters/elastic.js";
 import { SqlAdapter } from "../src/adapters/sql.js";
 import { samplePath } from "./helpers.js";
 
@@ -175,6 +175,68 @@ test("elastic: full response, NDJSON, nested ECS fields and numeric levels", asy
 
 test("elastic: requires a path when no endpoint is given", async () => {
   await assert.rejects(new ElasticAdapter().ingest({ name: "x", type: "elastic" }), /requires a "path"/);
+});
+
+/** Run `fn` with ELASTIC_* env vars set and fetch stubbed; returns the Authorization header of each request. */
+async function captureElasticAuth(env: Record<string, string>, fn: () => Promise<unknown>): Promise<Array<string | undefined>> {
+  const saved = { ...process.env };
+  const realFetch = globalThis.fetch;
+  const seen: Array<string | undefined> = [];
+  Object.assign(process.env, env);
+  globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    seen.push((init?.headers as Record<string, string>).Authorization);
+    return new Response(JSON.stringify({ hits: { hits: [], total: { value: 0 } } }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    await fn();
+  } finally {
+    globalThis.fetch = realFetch;
+    for (const key of Object.keys(env)) {
+      if (key in saved) process.env[key] = saved[key];
+      else delete process.env[key];
+    }
+  }
+  return seen;
+}
+
+test("elastic: environment credentials are only sent when allowed", async () => {
+  const adapter = new ElasticAdapter();
+  const endpoint = "https://es.example:9200";
+  const seen = await captureElasticAuth({ ELASTIC_API_KEY: "env-key" }, async () => {
+    await adapter.ingest({ name: "a", type: "elastic", endpoint });
+    await adapter.ingest({ name: "b", type: "elastic", endpoint, allowEnvCredentials: true });
+    await adapter.ingest({ name: "c", type: "elastic", endpoint, apiKey: "explicit" });
+  });
+  assert.deepEqual(seen, [undefined, "ApiKey env-key", "ApiKey explicit"]);
+
+  const basic = await captureElasticAuth({ ELASTIC_USERNAME: "u", ELASTIC_PASSWORD: "p" }, () =>
+    adapter.ingest({ name: "d", type: "elastic", endpoint, allowEnvCredentials: true })
+  );
+  assert.deepEqual(basic, [`Basic ${Buffer.from("u:p").toString("base64")}`]);
+});
+
+test("elastic: warns when credentials go over plain HTTP to a remote host", async () => {
+  const adapter = new ElasticAdapter();
+  let remote: string[] = [];
+  let local: string[] = [];
+  await captureElasticAuth({}, async () => {
+    remote = (await adapter.ingest({ name: "r", type: "elastic", endpoint: "http://es.internal:9200", apiKey: "k" })).warnings;
+    local = (await adapter.ingest({ name: "l", type: "elastic", endpoint: "http://localhost:9200", apiKey: "k" })).warnings;
+  });
+  assert.ok(remote.some((w) => /unencrypted HTTP/.test(w)));
+  assert.ok(!local.some((w) => /unencrypted HTTP/.test(w)));
+});
+
+test("elastic: credentialsForEndpoint trusts only configured endpoints", () => {
+  const sources = [{ name: "prod", type: "elastic" as const, endpoint: "https://ES.internal:9200/", apiKey: "prod-key" }];
+  assert.deepEqual(credentialsForEndpoint("https://es.internal:9200", sources, {}), { apiKey: "prod-key", allowEnvCredentials: true });
+  assert.deepEqual(credentialsForEndpoint("https://evil.example:9200", sources, {}), {});
+  assert.deepEqual(credentialsForEndpoint("https://es.internal:9201", sources, {}), {});
+  assert.deepEqual(credentialsForEndpoint("not a url", sources, {}), {});
+
+  const env = { ELASTIC_URL: "http://localhost:9200" };
+  assert.deepEqual(credentialsForEndpoint("http://localhost:9200/", [], env), { allowEnvCredentials: true });
+  assert.deepEqual(credentialsForEndpoint("http://localhost:9300", [], env), {});
 });
 
 // ── SQL ──────────────────────────────────────────────────────────────────────

@@ -67,6 +67,8 @@ export function parseConfig(raw: unknown, baseDir: string): AppConfig {
   const sources: SourceConfig[] = (parsed.sources ?? []).map((s) => ({
     ...s,
     path: s.path && !isAbsolute(s.path) ? resolve(baseDir, s.path) : s.path,
+    // The operator wrote this endpoint, so environment credentials may go to it
+    allowEnvCredentials: true,
   }));
 
   return {

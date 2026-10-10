@@ -107,6 +107,40 @@ test("ingest_logs reports bad input as a tool error, not a crash", async () => {
   assert.match(text(noPath), /needs a path/);
 });
 
+test("ingest_logs only sends Elasticsearch credentials to configured endpoints", async () => {
+  const ctx = createContext({
+    ...createContext().config,
+    sources: [{ name: "prod", type: "elastic", endpoint: "https://es.internal:9200", apiKey: "prod-key", allowEnvCredentials: true }],
+  });
+  const server = createServer(ctx);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const local = new Client({ name: "test-client", version: "0.0.0" });
+  await Promise.all([server.connect(serverTransport), local.connect(clientTransport)]);
+
+  const realFetch = globalThis.fetch;
+  const savedKey = process.env.ELASTIC_API_KEY;
+  const seen: Array<[string, string | undefined]> = [];
+  process.env.ELASTIC_API_KEY = "env-key";
+  globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    seen.push([new URL(String(url)).host, (init?.headers as Record<string, string>).Authorization]);
+    return new Response(JSON.stringify({ hits: { hits: [] } }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    await local.callTool({ name: "ingest_logs", arguments: { source: "elastic", endpoint: "https://es.internal:9200/" } });
+    await local.callTool({ name: "ingest_logs", arguments: { source: "elastic", endpoint: "https://attacker.example" } });
+  } finally {
+    globalThis.fetch = realFetch;
+    if (savedKey === undefined) delete process.env.ELASTIC_API_KEY;
+    else process.env.ELASTIC_API_KEY = savedKey;
+    await local.close();
+    await server.close();
+  }
+  assert.deepEqual(seen, [
+    ["es.internal:9200", "ApiKey prod-key"],
+    ["attacker.example", undefined],
+  ]);
+});
+
 test("summarise_errors returns text and structured clusters", async () => {
   const r = await call("summarise_errors", { topN: 3 });
   assert.match(text(r), /Error Summary/);

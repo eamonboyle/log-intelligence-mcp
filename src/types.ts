@@ -94,6 +94,11 @@ export interface SourceConfig {
   endpoint?: string; // for live Elastic queries
   index?: string; // Elastic index name
   apiKey?: string; // Elastic API key (falls back to ELASTIC_API_KEY env var)
+  /**
+   * Whether the ELASTIC_* environment credentials may be sent to `endpoint`.
+   * Set for operator-configured sources only, never from tool input.
+   */
+  allowEnvCredentials?: boolean;
   limit?: number; // max docs to fetch from a live Elastic query (default 10000)
   timestampField?: string; // Elastic timestamp field used for sorting (default @timestamp)
 }

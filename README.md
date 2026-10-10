@@ -158,7 +158,7 @@ ingest_logs(source="elastic", path="./dumps/errors.json")
 ingest_logs(source="elastic", endpoint="http://localhost:9200", index="app-logs", filter="level:error", limit=5000)
 ```
 
-Live queries authenticate with `apiKey` in the config file or the `ELASTIC_API_KEY` environment variable, or with `ELASTIC_USERNAME` and `ELASTIC_PASSWORD`. Results are sorted by `timestampField` (default `@timestamp`) and capped at 10 000 documents; a warning is returned when more matched.
+Live queries authenticate with `apiKey` in the config file or the `ELASTIC_API_KEY` environment variable, or with `ELASTIC_USERNAME` and `ELASTIC_PASSWORD`. Credentials are only sent to endpoints the operator chose: an `elastic` source in the config file, or the URL in `ELASTIC_URL`. An `ingest_logs` call naming any other endpoint is sent without credentials, so a model (or text in the logs it reads) cannot redirect them to another host. A warning is returned when credentials go over plain `http://` to a non-loopback host. Results are sorted by `timestampField` (default `@timestamp`) and capped at 10 000 documents; a warning is returned when more matched.
 
 ### SQLite Debug Tables
 

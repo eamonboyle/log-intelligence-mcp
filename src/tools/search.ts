@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { EntryJsonSchema, entryToJson, formatEntry, plural } from "../format.js";
+import { LOG_LEVELS, LogLevel } from "../types.js";
 import { parseDateArg, requireDateArg } from "../util/time.js";
 import { ServerContext, guard, isoDate, levelSchema, optionalIsoDate, sourceFilter, textResult } from "./common.js";
 
@@ -128,8 +129,7 @@ export function registerSearchTools(server: McpServer, ctx: ServerContext): void
   );
 }
 
-const LEVEL_ORDER = ["trace", "debug", "info", "warn", "error", "fatal"] as const;
-
-function levelsAtOrAbove(min: (typeof LEVEL_ORDER)[number]): (typeof LEVEL_ORDER)[number][] {
-  return LEVEL_ORDER.slice(LEVEL_ORDER.indexOf(min));
+// LOG_LEVELS is ordered by severity, trace → fatal
+function levelsAtOrAbove(min: LogLevel): LogLevel[] {
+  return LOG_LEVELS.slice(Math.max(0, LOG_LEVELS.indexOf(min)));
 }

@@ -12,7 +12,8 @@ import { IngestResult, LogEntry, SourceConfig } from "../types.js";
  *
  * Live mode: issues POST to `{endpoint}/{index}/_search` with an optional
  * query_string filter. Authentication is taken from `config.apiKey`, or the
- * ELASTIC_API_KEY / ELASTIC_USERNAME + ELASTIC_PASSWORD environment variables.
+ * ELASTIC_API_KEY / ELASTIC_USERNAME + ELASTIC_PASSWORD environment variables
+ * when `config.allowEnvCredentials` is set (see `credentialsForEndpoint`).
  * Results are capped at `config.limit` (default 10000, the ES window limit).
  */
 
@@ -27,6 +28,38 @@ const RESERVED_KEYS = new Set<string>([...TIMESTAMP_KEYS, ...LEVEL_KEYS, ...MESS
 export const DEFAULT_ELASTIC_LIMIT = 10000;
 
 type Doc = Record<string, unknown>;
+
+function normalizeEndpoint(endpoint: string): string | undefined {
+  try {
+    const url = new URL(endpoint);
+    return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function isLoopback(hostname: string): boolean {
+  return hostname === "localhost" || hostname.endsWith(".localhost") || hostname === "[::1]" || hostname.startsWith("127.");
+}
+
+/**
+ * Credentials for a caller-supplied endpoint, e.g. from the ingest_logs tool.
+ * A configured source's apiKey and the ELASTIC_* environment credentials are
+ * only sent to endpoints the operator chose (a config-file source or
+ * ELASTIC_URL), so a tool caller cannot redirect them to another host.
+ */
+export function credentialsForEndpoint(
+  endpoint: string,
+  sources: SourceConfig[],
+  env: NodeJS.ProcessEnv = process.env
+): Pick<SourceConfig, "apiKey" | "allowEnvCredentials"> {
+  const target = normalizeEndpoint(endpoint);
+  if (!target) return {};
+  const configured = sources.find((s) => s.type === "elastic" && s.endpoint && normalizeEndpoint(s.endpoint) === target);
+  if (configured) return { apiKey: configured.apiKey, allowEnvCredentials: true };
+  if (env.ELASTIC_URL && normalizeEndpoint(env.ELASTIC_URL) === target) return { allowEnvCredentials: true };
+  return {};
+}
 
 export class ElasticAdapter implements ILogAdapter {
   readonly type = "elastic";
@@ -103,8 +136,10 @@ export class ElasticAdapter implements ILogAdapter {
   }
 
   private buildAuthHeaders(config: SourceConfig, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-    const apiKey = config.apiKey ?? env.ELASTIC_API_KEY;
-    if (apiKey) return { Authorization: `ApiKey ${apiKey}` };
+    if (config.apiKey) return { Authorization: `ApiKey ${config.apiKey}` };
+    if (!config.allowEnvCredentials) return {};
+
+    if (env.ELASTIC_API_KEY) return { Authorization: `ApiKey ${env.ELASTIC_API_KEY}` };
 
     const user = env.ELASTIC_USERNAME;
     const pass = env.ELASTIC_PASSWORD;
@@ -131,16 +166,21 @@ export class ElasticAdapter implements ILogAdapter {
       body.query = { query_string: { query: config.filter } };
     }
 
+    const authHeaders = this.buildAuthHeaders(config);
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", ...this.buildAuthHeaders(config) },
+      headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify(body),
     });
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
+      const hint =
+        resp.status === 401 && !authHeaders.Authorization
+          ? " (no credentials were sent: ELASTIC_* credentials are only used for endpoints listed in the config file or ELASTIC_URL)"
+          : "";
       throw new Error(
-        `Elasticsearch query failed: ${resp.status} ${resp.statusText}${text ? ` — ${text.slice(0, 300)}` : ""}`
+        `Elasticsearch query failed: ${resp.status} ${resp.statusText}${text ? ` — ${text.slice(0, 300)}` : ""}${hint}`
       );
     }
 
@@ -150,6 +190,11 @@ export class ElasticAdapter implements ILogAdapter {
     const hits = data.hits?.hits ?? [];
     const docs = hits.map((h) => this.unwrapSource(h)).filter((d): d is Doc => d !== null);
     const result = this.toResult(docs, hits.length - docs.length, config);
+
+    const { protocol, hostname } = new URL(base);
+    if (authHeaders.Authorization && protocol === "http:" && !isLoopback(hostname)) {
+      result.warnings.push(`Credentials were sent to ${hostname} over unencrypted HTTP; use an https:// endpoint`);
+    }
 
     const rawTotal = data.hits?.total;
     const total = typeof rawTotal === "object" ? rawTotal.value : rawTotal;
