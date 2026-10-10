@@ -182,6 +182,9 @@ async function captureElasticAuth(env: Record<string, string>, fn: () => Promise
   const saved = { ...process.env };
   const realFetch = globalThis.fetch;
   const seen: Array<string | undefined> = [];
+  const isElastic = (key: string) => key.startsWith("ELASTIC_");
+  // Start from a clean slate so the developer's own ELASTIC_* vars cannot leak in
+  for (const key of Object.keys(process.env).filter(isElastic)) delete process.env[key];
   Object.assign(process.env, env);
   globalThis.fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
     seen.push((init?.headers as Record<string, string>).Authorization);
@@ -191,10 +194,8 @@ async function captureElasticAuth(env: Record<string, string>, fn: () => Promise
     await fn();
   } finally {
     globalThis.fetch = realFetch;
-    for (const key of Object.keys(env)) {
-      if (key in saved) process.env[key] = saved[key];
-      else delete process.env[key];
-    }
+    for (const key of Object.keys(process.env).filter(isElastic)) delete process.env[key];
+    for (const key of Object.keys(saved).filter(isElastic)) process.env[key] = saved[key];
   }
   return seen;
 }
