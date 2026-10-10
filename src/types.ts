@@ -1,12 +1,5 @@
 // ── Log Levels ──────────────────────────────────────────────────────────────
-export const LOG_LEVELS = [
-  "trace",
-  "debug",
-  "info",
-  "warn",
-  "error",
-  "fatal",
-] as const;
+export const LOG_LEVELS = ["trace", "debug", "info", "warn", "error", "fatal"] as const;
 
 export type LogLevel = (typeof LOG_LEVELS)[number];
 
@@ -14,11 +7,28 @@ export type LogLevel = (typeof LOG_LEVELS)[number];
 export interface LogEntry {
   timestamp: Date;
   level: LogLevel;
+  /** Rendered, human-readable message */
   message: string;
+  /**
+   * Message template (e.g. Serilog `@mt`) when the source provides one.
+   * Preferred over `message` for fingerprinting because placeholders are
+   * already normalised.
+   */
+  template?: string;
   exception?: string;
   properties: Record<string, unknown>;
-  source: string; // adapter name or file path
-  fingerprint?: string; // computed by clustering engine
+  /** Source name (friendly name or file path) */
+  source: string;
+  /** Computed by the clustering engine */
+  fingerprint?: string;
+}
+
+/** Result of an adapter ingest run */
+export interface IngestResult {
+  entries: LogEntry[];
+  /** Lines or documents that could not be parsed into an entry */
+  skipped: number;
+  warnings: string[];
 }
 
 // ── Error Clustering ────────────────────────────────────────────────────────
@@ -55,7 +65,8 @@ export interface IncreasedError {
   cluster: ErrorCluster;
   beforeRate: number; // errors per hour
   afterRate: number; // errors per hour
-  increaseRatio: number; // afterRate / beforeRate
+  /** afterRate / beforeRate; `null` when there was no baseline rate */
+  increaseRatio: number | null;
 }
 
 export interface RegressionReport {
@@ -69,26 +80,33 @@ export interface RegressionReport {
 }
 
 // ── Adapter Types ───────────────────────────────────────────────────────────
-export type AdapterType = "serilog" | "elastic" | "sql" | "flatfile";
+export const ADAPTER_TYPES = ["serilog", "elastic", "sql", "flatfile"] as const;
+export type AdapterType = (typeof ADAPTER_TYPES)[number];
 
 export interface SourceConfig {
   name: string;
   type: AdapterType;
-  path: string;
+  /** File path. Optional only for live Elasticsearch queries. */
+  path?: string;
   table?: string; // for SQL adapter
-  filter?: string; // optional SQL WHERE or property filter
+  filter?: string; // optional SQL WHERE or ES query_string
   pattern?: string; // regex pattern for flatfile
   endpoint?: string; // for live Elastic queries
   index?: string; // Elastic index name
+  apiKey?: string; // Elastic API key (falls back to ELASTIC_API_KEY env var)
+  limit?: number; // max docs to fetch from a live Elastic query (default 10000)
+  timestampField?: string; // Elastic timestamp field used for sorting (default @timestamp)
+}
+
+export interface AppDefaults {
+  bucketMinutes: number;
+  anomalyThreshold: number;
+  maxSamples: number;
 }
 
 export interface AppConfig {
   sources: SourceConfig[];
-  defaults: {
-    bucketMinutes: number;
-    anomalyThreshold: number;
-    maxSamples: number;
-  };
+  defaults: AppDefaults;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
@@ -114,4 +132,11 @@ export interface SourceInfo {
   entryCount: number;
   errorCount: number;
   timeRange: { earliest: Date; latest: Date } | null;
+  ingestedAt: Date;
+}
+
+// ── Grouping ─────────────────────────────────────────────────────────────────
+export interface GroupCount {
+  value: string;
+  count: number;
 }

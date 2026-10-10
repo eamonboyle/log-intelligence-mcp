@@ -1,3 +1,4 @@
+import { bucketize, MINUTE_MS } from "../util/time.js";
 import { LogEntry, AnomalyBucket, AnomalyResult } from "../types.js";
 
 /**
@@ -11,49 +12,14 @@ import { LogEntry, AnomalyBucket, AnomalyResult } from "../types.js";
  */
 
 /**
- * Bucket entries into fixed-size time windows and calculate counts.
+ * Calculate population mean and standard deviation.
  */
-function bucketize(
-  entries: LogEntry[],
-  bucketMs: number
-): Array<{ start: number; end: number; count: number }> {
-  if (entries.length === 0) return [];
-
-  const sorted = [...entries].sort(
-    (a, b) => a.timestamp.getTime() - b.timestamp.getTime()
-  );
-
-  const minTime = sorted[0].timestamp.getTime();
-  const maxTime = sorted[sorted.length - 1].timestamp.getTime();
-
-  const buckets: Array<{ start: number; end: number; count: number }> = [];
-  let current = Math.floor(minTime / bucketMs) * bucketMs;
-
-  while (current <= maxTime) {
-    const start = current;
-    const end = current + bucketMs;
-    const count = sorted.filter(
-      (e) => e.timestamp.getTime() >= start && e.timestamp.getTime() < end
-    ).length;
-    buckets.push({ start, end, count });
-    current += bucketMs;
-  }
-
-  return buckets;
-}
-
-/**
- * Calculate mean and standard deviation of an array of numbers.
- */
-function stats(values: number[]): { mean: number; stddev: number } {
+export function stats(values: readonly number[]): { mean: number; stddev: number } {
   if (values.length === 0) return { mean: 0, stddev: 0 };
 
   const mean = values.reduce((sum, v) => sum + v, 0) / values.length;
-  const variance =
-    values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
-  const stddev = Math.sqrt(variance);
-
-  return { mean, stddev };
+  const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length;
+  return { mean, stddev: Math.sqrt(variance) };
 }
 
 /**
@@ -62,31 +28,24 @@ function stats(values: number[]): { mean: number; stddev: number } {
  * @param entries - log entries to analyse (typically error-level only)
  * @param bucketMinutes - time window size in minutes (default 60)
  * @param threshold - z-score threshold for anomaly flagging (default 2.0)
- * @param fingerprint - optional: scope analysis to a specific error fingerprint
+ * @param fp - optional: scope analysis to a specific error fingerprint
  */
 export function detectAnomalies(
-  entries: LogEntry[],
+  entries: readonly LogEntry[],
   bucketMinutes: number = 60,
   threshold: number = 2.0,
   fp?: string
 ): AnomalyResult {
-  // Optionally filter by fingerprint
-  let filtered = entries;
-  if (fp) {
-    filtered = entries.filter((e) => e.fingerprint === fp);
-  }
+  const filtered = fp ? entries.filter((e) => e.fingerprint === fp) : entries;
 
-  const bucketMs = bucketMinutes * 60 * 1000;
-  const buckets = bucketize(filtered, bucketMs);
-  const counts = buckets.map((b) => b.count);
-  const { mean, stddev } = stats(counts);
+  const buckets = bucketize(filtered, bucketMinutes * MINUTE_MS);
+  const { mean, stddev } = stats(buckets.map((b) => b.count));
 
   const anomalousBuckets: AnomalyBucket[] = [];
-
   for (const bucket of buckets) {
+    if (bucket.count === 0) continue;
     const zScore = stddev > 0 ? (bucket.count - mean) / stddev : 0;
-
-    if (bucket.count > mean + threshold * stddev && bucket.count > 0) {
+    if (bucket.count > mean + threshold * stddev) {
       anomalousBuckets.push({
         start: new Date(bucket.start),
         end: new Date(bucket.end),
@@ -98,14 +57,17 @@ export function detectAnomalies(
     }
   }
 
-  // Sort by z-score descending
   anomalousBuckets.sort((a, b) => b.zScore - a.zScore);
 
   return {
     fingerprint: fp,
     totalBuckets: buckets.length,
     anomalousBuckets,
-    baselineMean: Math.round(mean * 100) / 100,
-    baselineStddev: Math.round(stddev * 100) / 100,
+    baselineMean: round2(mean),
+    baselineStddev: round2(stddev),
   };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }

@@ -1,149 +1,204 @@
 import { readFile } from "node:fs/promises";
-import { ILogAdapter } from "./base.js";
-import { LogEntry, LogLevel, SourceConfig } from "../types.js";
+import { ILogAdapter, requirePath } from "./base.js";
+import { normalizeLevel } from "../levels.js";
+import { asString, firstDefined, firstString } from "../util/object.js";
+import { IngestResult, LogEntry, SourceConfig } from "../types.js";
 
 /**
  * Parses Elasticsearch JSON dump files or queries a live Elasticsearch endpoint.
  *
- * Dump format: either a JSON array of `_source` docs, or an ES response with
- * `hits.hits[]._source` structure. Also supports NDJSON (one doc per line).
+ * Dump format: either a JSON array of `_source` docs, a full ES response with
+ * `hits.hits[]._source`, or NDJSON (one doc per line).
  *
- * Live mode: issues POST to `{endpoint}/{index}/_search` with optional filter.
+ * Live mode: issues POST to `{endpoint}/{index}/_search` with an optional
+ * query_string filter. Authentication is taken from `config.apiKey`, or the
+ * ELASTIC_API_KEY / ELASTIC_USERNAME + ELASTIC_PASSWORD environment variables.
+ * Results are capped at `config.limit` (default 10000, the ES window limit).
  */
+
+const TIMESTAMP_KEYS = ["@timestamp", "timestamp", "time", "date", "Timestamp"] as const;
+const LEVEL_KEYS = ["level", "log.level", "severity", "loglevel", "Level"] as const;
+// `log` is last because in ECS it is usually an object ({level, logger}); only string values are accepted
+const MESSAGE_KEYS = ["message", "msg", "Message", "event.original", "log"] as const;
+const EXCEPTION_KEYS = ["stack_trace", "error.stack_trace", "exception", "error.message", "Exception"] as const;
+
+const RESERVED_KEYS = new Set<string>([...TIMESTAMP_KEYS, ...LEVEL_KEYS, ...MESSAGE_KEYS, ...EXCEPTION_KEYS]);
+
+export const DEFAULT_ELASTIC_LIMIT = 10000;
+
+type Doc = Record<string, unknown>;
+
 export class ElasticAdapter implements ILogAdapter {
   readonly type = "elastic";
 
-  async ingest(config: SourceConfig): Promise<LogEntry[]> {
+  async ingest(config: SourceConfig): Promise<IngestResult> {
     if (config.endpoint) {
       return this.ingestLive(config);
     }
     return this.ingestFile(config);
   }
 
-  private async ingestFile(config: SourceConfig): Promise<LogEntry[]> {
-    const raw = await readFile(config.path, "utf-8");
+  private async ingestFile(config: SourceConfig): Promise<IngestResult> {
+    const path = requirePath(config, "elastic");
+    const raw = await readFile(path, "utf-8");
     const trimmed = raw.trim();
 
-    let docs: Record<string, unknown>[];
+    let docs: Doc[];
+    let skipped = 0;
 
-    // Try parsing as a full JSON document first
     if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
       try {
         const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed)) {
-          // Array of _source docs directly
-          docs = parsed.map((d: Record<string, unknown>) =>
-            d._source ? (d._source as Record<string, unknown>) : d
-          );
-        } else if (parsed.hits?.hits) {
-          // Full ES response
-          docs = (parsed.hits.hits as Array<{ _source: Record<string, unknown> }>).map(
-            (h) => h._source
-          );
-        } else {
-          // Single document
-          docs = [parsed._source ? (parsed._source as Record<string, unknown>) : parsed];
-        }
+        docs = this.docsFromParsed(parsed);
       } catch {
-        // Fall back to NDJSON
-        docs = this.parseNdjson(trimmed);
+        // Not a single JSON document — fall back to NDJSON
+        ({ docs, skipped } = this.parseNdjson(trimmed));
       }
     } else {
-      docs = this.parseNdjson(trimmed);
+      ({ docs, skipped } = this.parseNdjson(trimmed));
     }
 
-    return docs.map((d) => this.mapDoc(d, config)).filter((e): e is LogEntry => e !== null);
+    return this.toResult(docs, skipped, config);
   }
 
-  private parseNdjson(raw: string): Record<string, unknown>[] {
-    return raw
-      .split(/\r?\n/)
-      .filter((l) => l.trim().length > 0)
-      .map((line) => {
-        try {
-          const obj = JSON.parse(line);
-          return obj._source ? obj._source : obj;
-        } catch {
-          return null;
-        }
-      })
-      .filter((d): d is Record<string, unknown> => d !== null);
+  private docsFromParsed(parsed: unknown): Doc[] {
+    if (Array.isArray(parsed)) {
+      return parsed.map((d) => this.unwrapSource(d)).filter((d): d is Doc => d !== null);
+    }
+    if (parsed && typeof parsed === "object") {
+      const hits = (parsed as { hits?: { hits?: unknown[] } }).hits?.hits;
+      if (Array.isArray(hits)) {
+        return hits.map((h) => this.unwrapSource(h)).filter((d): d is Doc => d !== null);
+      }
+      const single = this.unwrapSource(parsed);
+      return single ? [single] : [];
+    }
+    return [];
   }
 
-  private async ingestLive(config: SourceConfig): Promise<LogEntry[]> {
-    const url = `${config.endpoint}/${config.index ?? "*"}/_search`;
+  private unwrapSource(value: unknown): Doc | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const obj = value as Doc;
+    const source = obj["_source"];
+    if (source && typeof source === "object" && !Array.isArray(source)) {
+      return source as Doc;
+    }
+    return obj;
+  }
+
+  private parseNdjson(raw: string): { docs: Doc[]; skipped: number } {
+    const docs: Doc[] = [];
+    let skipped = 0;
+    for (const line of raw.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      try {
+        const doc = this.unwrapSource(JSON.parse(line));
+        if (doc) docs.push(doc);
+        else skipped++;
+      } catch {
+        skipped++;
+      }
+    }
+    return { docs, skipped };
+  }
+
+  private buildAuthHeaders(config: SourceConfig, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+    const apiKey = config.apiKey ?? env.ELASTIC_API_KEY;
+    if (apiKey) return { Authorization: `ApiKey ${apiKey}` };
+
+    const user = env.ELASTIC_USERNAME;
+    const pass = env.ELASTIC_PASSWORD;
+    if (user && pass) {
+      return { Authorization: `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}` };
+    }
+    return {};
+  }
+
+  private async ingestLive(config: SourceConfig): Promise<IngestResult> {
+    const base = config.endpoint!.replace(/\/+$/, "");
+    const index = encodeURIComponent(config.index ?? "*");
+    // No ignore_unavailable: a mistyped index should fail loudly rather than ingest nothing
+    const url = `${base}/${index}/_search`;
+    const size = Math.min(config.limit ?? DEFAULT_ELASTIC_LIMIT, DEFAULT_ELASTIC_LIMIT);
+    const tsField = config.timestampField ?? "@timestamp";
+
     const body: Record<string, unknown> = {
-      size: 10000,
-      sort: [{ "@timestamp": { order: "desc" } }],
+      size,
+      track_total_hits: true, // otherwise ES caps hits.total at 10000 and truncation goes unnoticed
+      sort: [{ [tsField]: { order: "desc", unmapped_type: "date" } }],
     };
-
     if (config.filter) {
       body.query = { query_string: { query: config.filter } };
     }
 
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...this.buildAuthHeaders(config) },
       body: JSON.stringify(body),
     });
 
     if (!resp.ok) {
-      throw new Error(`Elasticsearch query failed: ${resp.status} ${resp.statusText}`);
+      const text = await resp.text().catch(() => "");
+      throw new Error(
+        `Elasticsearch query failed: ${resp.status} ${resp.statusText}${text ? ` — ${text.slice(0, 300)}` : ""}`
+      );
     }
 
-    const data = (await resp.json()) as { hits: { hits: Array<{ _source: Record<string, unknown> }> } };
-    return data.hits.hits
-      .map((h) => this.mapDoc(h._source, config))
-      .filter((e): e is LogEntry => e !== null);
+    const data = (await resp.json()) as {
+      hits?: { hits?: unknown[]; total?: number | { value: number; relation?: string } };
+    };
+    const hits = data.hits?.hits ?? [];
+    const docs = hits.map((h) => this.unwrapSource(h)).filter((d): d is Doc => d !== null);
+    const result = this.toResult(docs, hits.length - docs.length, config);
+
+    const rawTotal = data.hits?.total;
+    const total = typeof rawTotal === "object" ? rawTotal.value : rawTotal;
+    const lowerBound = typeof rawTotal === "object" && rawTotal.relation === "gte";
+    if (typeof total === "number" && (total > hits.length || lowerBound)) {
+      result.warnings.push(
+        `Only ${hits.length} of ${lowerBound ? "at least " : ""}${total} matching documents were fetched (limit ${size}); narrow the filter or raise "limit"`
+      );
+    }
+    return result;
   }
 
-  private mapDoc(doc: Record<string, unknown>, config: SourceConfig): LogEntry | null {
-    const rawTs = (doc["@timestamp"] ?? doc["timestamp"] ?? doc["date"]) as string | undefined;
-    if (!rawTs) return null;
-    const timestamp = new Date(rawTs);
-    if (isNaN(timestamp.getTime())) return null;
+  private toResult(docs: Doc[], skipped: number, config: SourceConfig): IngestResult {
+    const entries: LogEntry[] = [];
+    for (const doc of docs) {
+      const entry = this.mapDoc(doc, config);
+      if (entry) entries.push(entry);
+      else skipped++;
+    }
+    const warnings: string[] = [];
+    if (skipped > 0) warnings.push(`${skipped} document(s) lacked a timestamp or message and were skipped`);
+    return { entries, skipped, warnings };
+  }
 
-    const rawLevel = (doc["level"] ?? doc["log.level"] ?? doc["severity"] ?? "info") as string;
-    const level = this.mapLevel(rawLevel);
+  private mapDoc(doc: Doc, config: SourceConfig): LogEntry | null {
+    const rawTs = firstDefined(doc, TIMESTAMP_KEYS);
+    if (rawTs === undefined) return null;
+    const timestamp = new Date(rawTs as string | number);
+    if (Number.isNaN(timestamp.getTime())) return null;
 
-    const message = (doc["message"] ?? doc["msg"] ?? doc["log"] ?? "") as string;
+    const level = normalizeLevel(firstDefined(doc, LEVEL_KEYS), "info");
+
+    const message = firstString(doc, MESSAGE_KEYS);
     if (!message) return null;
 
-    const exception = (doc["stack_trace"] ?? doc["error.stack_trace"] ?? doc["exception"]) as
-      | string
-      | undefined;
+    const exception = firstDefined(doc, EXCEPTION_KEYS);
 
-    const properties: Record<string, unknown> = {};
+    const properties: Doc = {};
     for (const [key, value] of Object.entries(doc)) {
-      if (!["@timestamp", "timestamp", "date", "level", "log.level", "severity", "message", "msg", "log", "stack_trace", "error.stack_trace", "exception"].includes(key)) {
-        properties[key] = value;
-      }
+      if (!RESERVED_KEYS.has(key)) properties[key] = value;
     }
 
     return {
       timestamp,
       level,
       message,
-      exception: exception || undefined,
+      exception: exception !== undefined ? asString(exception) : undefined,
       properties,
       source: config.name || config.path || config.endpoint || "elastic",
     };
-  }
-
-  private mapLevel(raw: string): LogLevel {
-    const lower = raw.toLowerCase();
-    const map: Record<string, LogLevel> = {
-      trace: "trace",
-      debug: "debug",
-      info: "info",
-      information: "info",
-      warn: "warn",
-      warning: "warn",
-      error: "error",
-      fatal: "fatal",
-      critical: "fatal",
-      emerg: "fatal",
-    };
-    return map[lower] ?? "info";
   }
 }

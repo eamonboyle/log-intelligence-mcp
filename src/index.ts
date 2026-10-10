@@ -1,91 +1,87 @@
 #!/usr/bin/env node
 
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { createServer, setConfig, store } from "./server.js";
-import { AppConfig, DEFAULT_CONFIG } from "./types.js";
-import { getAdapter } from "./adapters/index.js";
-import { assignFingerprints } from "./engine/clustering.js";
+import { parseArgs } from "node:util";
+import { loadConfig } from "./config.js";
+import { ingestSource } from "./ingest.js";
+import { createContext, createServer, SERVER_NAME, SERVER_VERSION } from "./server.js";
+import { ServerContext } from "./tools/index.js";
 
-/**
- * Load optional configuration from log-intelligence.config.json in CWD.
- */
-async function loadConfig(): Promise<AppConfig> {
-  const configPath = resolve(process.cwd(), "log-intelligence.config.json");
-  try {
-    const raw = await readFile(configPath, "utf-8");
-    const parsed = JSON.parse(raw);
-    return {
-      sources: parsed.sources ?? [],
-      defaults: {
-        bucketMinutes: parsed.defaults?.bucketMinutes ?? DEFAULT_CONFIG.defaults.bucketMinutes,
-        anomalyThreshold: parsed.defaults?.anomalyThreshold ?? DEFAULT_CONFIG.defaults.anomalyThreshold,
-        maxSamples: parsed.defaults?.maxSamples ?? DEFAULT_CONFIG.defaults.maxSamples,
-      },
-    };
-  } catch {
-    // No config file or invalid — use defaults
-    return { ...DEFAULT_CONFIG };
-  }
+const log = (msg: string) => console.error(`[${SERVER_NAME}] ${msg}`);
+
+function printHelp(): void {
+  console.log(`${SERVER_NAME} ${SERVER_VERSION}
+
+MCP server that ingests structured logs and surfaces error clusters, anomalies and regressions.
+Speaks MCP over stdio; point your MCP client at this executable.
+
+Usage: ${SERVER_NAME} [options]
+
+Options:
+  -c, --config <path>  Config file (default: ./log-intelligence.config.json, or $LOG_INTELLIGENCE_CONFIG)
+  -v, --version        Print the version and exit
+  -h, --help           Show this help
+`);
 }
 
 /**
  * Pre-ingest any sources defined in the config file.
  */
-async function preIngest(config: AppConfig): Promise<void> {
-  for (const sourceConfig of config.sources) {
+async function preIngest(ctx: ServerContext): Promise<void> {
+  for (const sourceConfig of ctx.config.sources) {
     try {
-      const adapter = getAdapter(sourceConfig.type);
-      const entries = await adapter.ingest(sourceConfig);
-      assignFingerprints(entries);
-      store.add(entries);
-      console.error(
-        `[log-intelligence-mcp] Pre-ingested ${entries.length} entries from "${sourceConfig.name}" (${sourceConfig.type})`
-      );
+      const outcome = await ingestSource(ctx.store, sourceConfig);
+      log(`Pre-ingested ${outcome.result.entries.length} entries from "${sourceConfig.name}" (${sourceConfig.type})`);
+      for (const w of outcome.result.warnings) log(`  warning: ${w}`);
     } catch (err) {
-      console.error(
-        `[log-intelligence-mcp] Failed to pre-ingest "${sourceConfig.name}": ${err instanceof Error ? err.message : String(err)}`
-      );
+      log(`Failed to pre-ingest "${sourceConfig.name}": ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 }
 
-/**
- * Main entry point.
- */
 async function main(): Promise<void> {
-  // Load config
-  const appConfig = await loadConfig();
-  setConfig(appConfig);
+  const { values } = parseArgs({
+    options: {
+      config: { type: "string", short: "c" },
+      version: { type: "boolean", short: "v" },
+      help: { type: "boolean", short: "h" },
+    },
+    strict: true,
+  });
 
-  // Pre-ingest configured sources
-  if (appConfig.sources.length > 0) {
-    await preIngest(appConfig);
+  if (values.help) {
+    printHelp();
+    return;
+  }
+  if (values.version) {
+    console.log(SERVER_VERSION);
+    return;
   }
 
-  // Create MCP server and connect via stdio
-  const server = createServer();
+  const loaded = await loadConfig(values.config);
+  for (const w of loaded.warnings) log(`warning: ${w}`);
+  if (loaded.path) log(`Loaded config from ${loaded.path}`);
+
+  const ctx = createContext(loaded.config);
+  if (ctx.config.sources.length > 0) {
+    await preIngest(ctx);
+  }
+
+  const server = createServer(ctx);
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  log(`v${SERVER_VERSION} started on stdio transport`);
 
-  console.error("[log-intelligence-mcp] Server started on stdio transport");
-
-  // Graceful shutdown
-  process.on("SIGINT", async () => {
-    console.error("[log-intelligence-mcp] Shutting down...");
+  const shutdown = async (signal: string) => {
+    log(`Received ${signal}, shutting down...`);
     await server.close();
     process.exit(0);
-  });
-
-  process.on("SIGTERM", async () => {
-    console.error("[log-intelligence-mcp] Shutting down...");
-    await server.close();
-    process.exit(0);
-  });
+  };
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
 main().catch((err) => {
-  console.error("[log-intelligence-mcp] Fatal error:", err);
+  log(`Fatal error: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
   process.exit(1);
 });

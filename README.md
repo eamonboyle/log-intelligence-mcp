@@ -7,12 +7,16 @@ An AI-powered log analysis server built on the [Model Context Protocol (MCP)](ht
 
 ## Features
 
-- **Multi-source ingestion** -- Serilog JSON/CLEF, Elasticsearch dumps, SQLite databases, plain text log files
-- **Error fingerprinting** -- Automatically normalises and clusters similar error messages
+- **Multi-source ingestion** -- Serilog JSON/CLEF, Elasticsearch dumps or live endpoints, SQLite databases, plain text log files
+- **Error fingerprinting** -- Normalises variable data (ids, numbers, paths, emails, …) and clusters similar error messages
 - **Anomaly detection** -- Statistical spike detection using z-score analysis on time-bucketed error rates
 - **Regression detection** -- Compares error patterns before/after a deployment date
-- **Full-text search** -- Search across all ingested log entries
+- **Context and search** -- Substring or regex search, and the entries surrounding any point in time
+- **Property breakdowns** -- Count errors by any structured property (application, host, status code, …)
 - **Timeline visualisation** -- Error frequency bucketed over time with ASCII bar charts
+- **Structured output** -- Every tool returns both readable text and JSON `structuredContent` with a published schema
+
+Requires Node.js 22 or newer.
 
 ## Install
 
@@ -27,14 +31,17 @@ npx log-intelligence-mcp
 ## Quick Start (from source)
 
 ```bash
-# Install dependencies
 npm install
-
-# Build
 npm run build
+npm start          # stdio transport for MCP clients
+```
 
-# Run (stdio transport for MCP clients)
-npm start
+```
+log-intelligence-mcp [options]
+
+  -c, --config <path>  Config file (default: ./log-intelligence.config.json, or $LOG_INTELLIGENCE_CONFIG)
+  -v, --version        Print the version and exit
+  -h, --help           Show help
 ```
 
 ## MCP Client Configuration
@@ -48,7 +55,7 @@ Add to your `.cursor/mcp.json`:
   "mcpServers": {
     "log-intelligence": {
       "command": "npx",
-      "args": ["log-intelligence-mcp"]
+      "args": ["-y", "log-intelligence-mcp"]
     }
   }
 }
@@ -56,21 +63,18 @@ Add to your `.cursor/mcp.json`:
 
 ### Cursor (global install)
 
-If you installed globally with `npm install -g log-intelligence-mcp`:
-
 ```json
 {
   "mcpServers": {
     "log-intelligence": {
-      "command": "log-intelligence-mcp"
+      "command": "log-intelligence-mcp",
+      "args": ["--config", "/path/to/log-intelligence.config.json"]
     }
   }
 }
 ```
 
 ### Cursor (local development)
-
-When developing from source:
 
 ```json
 {
@@ -83,16 +87,17 @@ When developing from source:
 }
 ```
 
-### Claude Desktop
+### Claude Desktop / Claude Code
 
-Add to your `claude_desktop_config.json`:
+Add to `claude_desktop_config.json`, or run `claude mcp add log-intelligence -- npx -y log-intelligence-mcp`:
 
 ```json
 {
   "mcpServers": {
     "log-intelligence": {
       "command": "npx",
-      "args": ["log-intelligence-mcp"]
+      "args": ["-y", "log-intelligence-mcp"],
+      "env": { "LOG_INTELLIGENCE_CONFIG": "/path/to/log-intelligence.config.json" }
     }
   }
 }
@@ -102,12 +107,18 @@ Add to your `claude_desktop_config.json`:
 
 | Tool | Description |
 |------|-------------|
-| `ingest_logs` | Load logs from a source (serilog, elastic, sql, flatfile) |
+| `ingest_logs` | Load logs from a source (serilog, elastic, sql, flatfile). Re-ingesting a source name replaces it unless `mode: "append"` |
+| `list_sources` | Ingested sources with entry/error counts and time ranges |
+| `clear_logs` | Remove one source, or everything |
 | `summarise_errors` | Cluster and summarise error-level entries |
-| `detect_new_error_pattern` | Find errors in a comparison window absent from a baseline |
+| `detect_new_error_pattern` | Find errors in a comparison window absent from a baseline window |
 | `regression_after_date` | Compare error patterns before/after a deployment |
-| `search_logs` | Full-text search across all ingested entries |
+| `search_logs` | Substring or regex search across messages and exceptions, filterable by level, source, fingerprint and time |
+| `get_log_context` | Entries immediately before and after a timestamp, across all levels |
+| `group_by_property` | Count entries by a structured property (or `level`, `source`, `fingerprint`) |
 | `get_error_timeline` | Error frequency over time with optional anomaly detection |
+
+All tools accept ISO 8601 dates and return `structuredContent` matching their advertised `outputSchema`, so clients can work with the data directly rather than parsing text.
 
 ## Resources
 
@@ -115,62 +126,69 @@ Add to your `claude_desktop_config.json`:
 |-----|-------------|
 | `logs://sources` | List all ingested log sources with entry counts |
 | `logs://summary` | Overall stats: total entries, error count, unique patterns |
+| `logs://cluster/{fingerprint}` | Details and sample entries for one error cluster (fingerprints autocomplete) |
 
 ## Prompts
 
 | Prompt | Description |
 |--------|-------------|
-| `analyse-logs` | Guided workflow: ingest, summarise, detect anomalies |
+| `analyse-logs` | Guided workflow: ingest, summarise, detect anomalies, inspect context |
 | `investigate-error` | Deep dive into a specific error pattern |
+| `review-deployment` | Go/no-go review of a deployment using regression detection |
 
 ## Log Sources
 
 ### Serilog JSON (.clef)
 
-Reads [Compact Log Event Format](https://clef-lang.org/) files -- one JSON object per line with `@t`, `@l`, `@mt`, `@m`, `@x` fields. Also supports standard Serilog JSON output.
+Reads [Compact Log Event Format](https://clef-lang.org/) files -- one JSON object per line with `@t`, `@l`, `@mt`, `@m`, `@x` fields -- and classic Serilog JSON (`Timestamp`, `Level`, `RenderedMessage`, `Properties`). When only a message template is present it is rendered from the event properties for display, and the template itself is used for clustering. Files are streamed, so large logs are fine.
 
-```bash
-# Example: ingest a Serilog file
+```
 ingest_logs(source="serilog", path="./logs/app.clef")
 ```
 
-### Elasticsearch Dumps
+### Elasticsearch
 
-Accepts JSON array of `_source` documents, full ES response format (`hits.hits[]._source`), or NDJSON. Can also query a live Elasticsearch endpoint.
+Accepts a JSON array of `_source` documents, a full ES response (`hits.hits[]._source`), or NDJSON. Field names follow common conventions including ECS (`@timestamp`, `log.level`, `message`, `error.stack_trace`); nested objects and dotted keys both work, and numeric levels (pino, syslog) are understood.
 
-```bash
+```
 # File dump
 ingest_logs(source="elastic", path="./dumps/errors.json")
 
 # Live query
-ingest_logs(source="elastic", endpoint="http://localhost:9200", index="app-logs", filter="level:error")
+ingest_logs(source="elastic", endpoint="http://localhost:9200", index="app-logs", filter="level:error", limit=5000)
 ```
+
+Live queries authenticate with `apiKey` in the config file or the `ELASTIC_API_KEY` environment variable, or with `ELASTIC_USERNAME` and `ELASTIC_PASSWORD`. Results are sorted by `timestampField` (default `@timestamp`) and capped at 10 000 documents; a warning is returned when more matched.
 
 ### SQLite Debug Tables
 
-Reads from SQLite database files. Auto-maps columns by convention (`Timestamp`, `Level`, `Message`, `Exception`).
+Reads from SQLite database files. Columns are mapped by convention (`Timestamp`/`created_at`, `Level`/`severity`, `Message`/`msg`, `Exception`/`error`); other columns become properties.
 
-```bash
+```
 ingest_logs(source="sql", path="./debug.db", table="Logs", filter="Level = 'Error'")
 ```
 
 ### Flat Files
 
-Parses common formats with ISO timestamps, log levels, and messages. Handles multi-line stack traces. Supports custom regex patterns.
+Parses `2026-02-10T07:10:00Z [ERROR] message` and `2026-02-10 07:10:00,123 ERROR message` styles plus Apache/Nginx combined access logs (status ≥ 500 becomes an error, ≥ 400 a warning). Lines that do not start a new entry -- stack frames, `Caused by:` lines, wrapped text -- are attached to the previous entry as its exception. Files are streamed.
 
-```bash
+```
 ingest_logs(source="flatfile", path="./logs/app.log")
+
+# Custom format via regex with named groups
+ingest_logs(source="flatfile", path="./app.log", pattern="^level=(?<level>\\w+) ts=(?<timestamp>\\S+) msg=(?<message>.*)$")
 ```
 
 ## Configuration
 
-Optionally place a `log-intelligence.config.json` in your working directory to pre-configure sources:
+Optionally create a `log-intelligence.config.json` to pre-configure sources. It is looked for in the working directory, or at the path given by `--config` / `LOG_INTELLIGENCE_CONFIG`. Relative paths are resolved against the config file's own directory, so it works regardless of where the MCP client launches the server from.
 
 ```json
 {
   "sources": [
     { "name": "app-logs", "type": "serilog", "path": "./logs/app.clef" },
-    { "name": "db-errors", "type": "sql", "path": "./debug.db", "table": "Logs", "filter": "Level = 'Error'" }
+    { "name": "db-errors", "type": "sql", "path": "./debug.db", "table": "Logs", "filter": "Level = 'Error'" },
+    { "name": "prod-es", "type": "elastic", "endpoint": "https://es.internal:9200", "index": "app-*", "filter": "log.level:error", "limit": 5000 }
   ],
   "defaults": {
     "bucketMinutes": 60,
@@ -180,13 +198,13 @@ Optionally place a `log-intelligence.config.json` in your working directory to p
 }
 ```
 
-Pre-configured sources are automatically ingested when the server starts.
+Pre-configured sources are ingested when the server starts. Problems with the file are reported on stderr instead of being silently ignored.
 
 ## How It Works
 
 ### Error Fingerprinting
 
-Messages are normalised by stripping variable tokens (UUIDs, numbers, timestamps, paths, URLs, IPs, quoted strings), then SHA-256 hashed to produce a 16-character fingerprint. Entries sharing a fingerprint are grouped into error clusters.
+Messages are normalised by replacing variable tokens -- timestamps, URLs, email addresses, IPs, UUIDs, file paths, quoted strings, and any word containing a digit (`30ms`, `db2`, `abc123def456`) -- then collapsed and SHA-256 hashed to a 16-character fingerprint. The first line of the exception, if any, is included. Entries sharing a fingerprint form an error cluster.
 
 ### Anomaly Detection
 
@@ -196,33 +214,29 @@ Error entries are bucketed into time windows. The baseline mean and standard dev
 
 Given a deployment date, the detector splits logs into before/after windows, clusters errors independently in each, then performs a set-diff to identify:
 - **New errors** -- appeared only after deployment
-- **Increased errors** -- existed before but rate increased >2x
+- **Increased errors** -- existed before but the hourly rate grew by more than `increaseFactor` (default 2×)
 - **Resolved errors** -- disappeared after deployment
 
 ## Sample Data
 
 The `samples/` directory contains example log files for testing:
-- `app.clef` -- Serilog CLEF format with a simulated deployment + Redis outage
+- `app.clef` -- Serilog CLEF format with a simulated deployment at 09:05 followed by a Redis outage
 - `webserver.log` -- Flat file format with Java stack traces
 - `elastic-dump.json` -- Elasticsearch JSON dump
 - `log-intelligence.config.json` -- Config to auto-ingest all samples
 
-To test with sample data, copy the config to your working directory:
-
-```bash
-cp samples/log-intelligence.config.json .
-npm start
-```
+The repository root already contains a config pointing at the samples, so `npm start` from a source checkout serves them immediately. Try `regression_after_date` with `deploymentDate="2026-02-10T09:05:00Z"`, `hoursBefore=2`, `hoursAfter=2`.
 
 ## Development
 
 ```bash
-# Run in dev mode with hot reload
-npm run dev
-
-# Type-check without emitting
-npx tsc --noEmit
+npm run dev         # run from source with tsx
+npm run typecheck   # tsc --noEmit over src and tests
+npm test            # node:test suite (engine, adapters, config, end-to-end MCP client)
+npm run build       # emit dist/
 ```
+
+The end-to-end tests drive the server through the SDK's in-memory transport with a real MCP client, so tool schemas, structured output and resource templates are exercised exactly as a client would see them.
 
 ## License
 
